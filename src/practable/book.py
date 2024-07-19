@@ -31,9 +31,11 @@ class Booker:
         # Jupyter notebooks
         
         u = urlparse(book_server)
+        self.activities={}
         self.host = u.netloc
         self.app_author = "practable" 
         self.app_name = "practable-python-" + u.netloc.replace(".","-") + u.path.replace("/","-")
+        self.bookings=[]
         self.groups=[]
         self.group_details={}
         self.experiments=[]
@@ -67,6 +69,61 @@ class Booker:
         
         self.groups.append(group)
            
+    def book(self, duration, selected=""):
+        
+        if not isinstance(duration, timedelta):
+            raise TypeError("duration must be a datetime.timedelta")
+
+        start =  datetime.now(UTC)
+        end = start + duration
+        
+        if selected == "":
+            # if  none specified, select an experiment from self.available
+            # note: use filter_experiments to set self.available
+            if len(self.available) < 1:
+                if self.filter_number == "":
+                    raise Exception("There are no available experiments matching `%s`"%(self.filter_name))            
+                else:
+                    raise Exception("There are no available experiments matching `%s` number `%s`"%(self.filter_name,self.filter_number))  
+                    
+            # book a random selection from the available list
+            selected = random.choice(self.available)
+        
+        # make the booking
+        slot = self.experiment_details[selected]["slot"]
+        url = self.book_server + "/api/v1/slots/" + slot 
+        params             ={"user_name": self.user,
+                             "from": start.isoformat(),
+                             "to": end.isoformat(),
+                             }    
+        
+        r = requests.post(url,params=params, headers=self.headers)  
+        
+        if r.status_code != 204:
+            print(r.status_code)
+            print(r.text)
+            raise Exception("could not book %s for %s"%(selected, duration))
+    
+    def check_slot_available(self, slot):
+        url = self.book_server + "/api/v1/slots/" +  slot
+        r = requests.get(url, headers=self.headers)  
+        if r.status_code != 200:
+            print(r.status_code)
+            print(r.text)
+            raise Exception("could not get slot details for slot %s"%(slot)) 
+
+        avail = r.json()
+        if len(avail) < 1:
+           available_now=False
+           when=[]
+        else:
+           start = datetime.fromisoformat(avail[0]["start"])
+           end = datetime.fromisoformat(avail[0]["end"])
+           when = {"start":start, "end":end}
+           available_now = when["start"] <= (datetime.now(UTC) + timedelta(seconds=1))
+           
+        return available_now, when  
+    
     def ensure_logged_in(self): #most booking operations take much less than a minute
     
         if not self.exp > (datetime.now() + timedelta(minutes=2)):
@@ -107,60 +164,6 @@ class Booker:
             file.write(user)
         self.user = user    
     
-    def get_bookings(self):
-        self.ensure_logged_in()
-        url = self.book_server + "/api/v1/users/" + self.user + "/bookings"
-        r = requests.get(url, headers=self.headers)      
-        if r.status_code != 200:
-            print(r.status_code)
-            print(r.text)
-            raise Exception("could not get bookings for %s from %s"%(self.user, self.booking_server)) 
-            
-        self.bookings = r.json()
-
-    def get_group_details(self):
-        self.ensure_logged_in()
-        
-        for group in self.groups:
-            url = self.book_server + "/api/v1/groups/" + group
-            r = requests.get(url, headers=self.headers)      
-            if r.status_code != 200:
-                print(r.status_code)
-                print(r.text)
-                raise Exception("could not get group details for group %s"%(group)) 
-            
-            gd = r.json()
-            self.group_details[group] = gd
-            for policy in gd["policies"].values():
-                for slot in policy["slots"]:
-                    v = policy["slots"][slot]
-                    v["slot"] = slot
-                    name = v["description"]["name"]
-                    self.experiments.append(name)
-                    self.experiment_details[name] = v
-                    
-            
-            
-    def check_slot_available(self, slot):
-        url = self.book_server + "/api/v1/slots/" +  slot
-        r = requests.get(url, headers=self.headers)  
-        if r.status_code != 200:
-            print(r.status_code)
-            print(r.text)
-            raise Exception("could not get slot details for slot %s"%(slot)) 
-
-        avail = r.json()
-        if len(avail) < 1:
-           available_now=False
-           when=[]
-        else:
-           start = datetime.fromisoformat(avail[0]["start"])
-           end = datetime.fromisoformat(avail[0]["end"])
-           when = {"start":start, "end":end}
-           available_now = when["start"] <= (datetime.now(UTC) + timedelta(seconds=1))
-           
-        return available_now, when  
-
     def filter_experiments(self, sub, number=""):
         self.filter_name = sub
         self.filter_number = number
@@ -183,35 +186,112 @@ class Booker:
             else:
                 self.unavailable[name]=when["start"]
                 
-    def book(self, duration):
-        
-        if not isinstance(duration, timedelta):
-            raise TypeError("duration must be a datetime.timedelta")
-
-        start =  datetime.now(UTC)
-        end = start + duration
-        
-        if len(self.available) < 1:
-            if self.filter_number == "":
-                raise Exception("There are no available experiments matching `%s`"%(self.filter_name))            
-            else:
-                raise Exception("There are no available experiments matching `%s` number `%s`"%(self.filter_name,self.filter_number))  
-                
-        # book a random selection from the available list
-        selected = random.choice(self.available)
-                
-        slot = self.experiment_details[selected]["slot"]
-        url = self.book_server + "/api/v1/slots/" + slot 
-        params             ={"user_name": self.user,
-                             "from": start.isoformat(),
-                             "to": end.isoformat(),
-                             }    
-        
-        r = requests.post(url,params=params, headers=self.headers)  
-        
-        if r.status_code != 204:
+    def get_activity(self, name):
+        #get the activity associated with a booking
+        url = self.book_server + "/api/v1/users/" + self.user + "/bookings/" + name
+        r = requests.put(url, headers=self.headers)      
+        if r.status_code != 200:
             print(r.status_code)
             print(r.text)
-            raise Exception("could not booking %s for %s"%(selected, duration))    
+            raise Exception("could not get activity for booking %s"%(name)) 
+           
+        #remove stale activities    
+        activities = self.activities
+        now = datetime.now(UTC)
+        for activity in activities:
+            if activity["when"]["end"] > now:
+                del self.activities[activity]
+                
+        ad = r.json()
+        self.activities[name] = ad
+       
+        
+           
+    def get_bookings(self):
+        self.ensure_logged_in()
+        url = self.book_server + "/api/v1/users/" + self.user + "/bookings"
+        r = requests.get(url, headers=self.headers)      
+        if r.status_code != 200:
+            print(r.status_code)
+            print(r.text)
+            raise Exception("could not get bookings for %s from %s"%(self.user, self.booking_server)) 
+            
+        bookings = r.json()
+        
+        now = datetime.now(UTC)
+        
+        self.bookings = []
+        
+        for booking in bookings:
+            start = datetime.fromisoformat(booking["when"]["start"])
+            end = datetime.fromisoformat(booking["when"]["end"])
+            
+            if now >= start and now <= end:
+                self.bookings.append(booking)
+                
+
+    def get_group_details(self):
+        self.ensure_logged_in()
+        
+        for group in self.groups:
+            url = self.book_server + "/api/v1/groups/" + group
+            r = requests.get(url, headers=self.headers)      
+            if r.status_code != 200:
+                print(r.status_code)
+                print(r.text)
+                raise Exception("could not get group details for group %s"%(group)) 
+            
+            gd = r.json()
+            self.group_details[group] = gd
+            for policy in gd["policies"].values():
+                for slot in policy["slots"]:
+                    v = policy["slots"][slot]
+                    v["slot"] = slot
+                    name = v["description"]["name"]
+                    self.experiments.append(name)
+                    self.experiment_details[name] = v
+                    
+    def cancel_booking(self, name):
+        
+        url = self.book_server + "/api/v1/users/" + self.user + "/bookings/" + name
+        
+        r = requests.delete(url, headers=self.headers)  
+        
+    
+        if r.status_code != 404:       
+           print(r.status_code)
+           print(r.text)               
+           raise Exception("could not cancel booking %s"%(name))
+           
+    def cancel_all_bookings(self):
+        
+        self.get_bookings() #refresh current bookings
+        
+        for booking in self.bookings:
+            try:
+                self.cancel_booking(booking["name"])
+            except:
+                pass #ignore the case where we get 500 can't cancel booking that already ended
+            
+        self.get_bookings()
+        
+        if len(self.bookings) > 0:
+            raise Exception("unable to cancel all bookings")
+            
+        
+
+           
+   
+
+
+
+                
+
+            
+
+        
+            
+
+        
       
             
