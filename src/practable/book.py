@@ -329,7 +329,7 @@ if __name__ == "__main__":
     b.cancel_all_bookings()
     b.get_group_details()
     b.filter_experiments("Spin",number="51");      
-    b.book(timedelta(seconds=15)); 
+    b.book(timedelta(seconds=30)); 
     b.get_bookings()   
     b.get_all_activities()
     
@@ -344,12 +344,15 @@ if __name__ == "__main__":
     
     with wsconnect(url) as websocket:
         
-       #websocket.send('{"set":"mode","to":"stop"}')
+       websocket.send('{"set":"mode","to":"stop"}')
+       time.sleep(1)
        websocket.send('{"set":"mode","to":"position"}')
+       time.sleep(1)
        websocket.send('{"set":"parameters","kp":1,"ki":0,"kd":0}')
+       time.sleep(1)
        websocket.send('{"set":"position","to":2}')
        
-       for x in range(100):
+       for x in range(1000):
            try:
                message = websocket.recv()
                messages.append(json.loads(message))       
@@ -361,11 +364,14 @@ if __name__ == "__main__":
     ts = []
     ds = []    
     for m in messages:
-        for t in m["t"]:
-            ts.append(t)
-        for d in m["d"]:
-            ds.append(d)
-            
+        try:
+            for t in m["t"]:
+                ts.append(t)
+            for d in m["d"]:
+                ds.append(d)
+        except KeyError:
+            continue
+        
     plt.figure()        
     plt.plot(ts,ds)
         
