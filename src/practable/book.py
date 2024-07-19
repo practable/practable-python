@@ -9,14 +9,21 @@ The user name is stored in the user's configuration directory, or in cwd
 @author: tim
 
 """
+
 from datetime import datetime, timedelta, UTC
+import json
+import matplotlib.pyplot as plt
+import numpy as np
 import os.path
 from platformdirs import user_config_dir
 from pathlib import Path
+from queue import Queue
 import random
 import requests
+import time
 from urllib.parse import urlparse
 
+from websockets.sync.client import connect as wsconnect
 
 class Booker:
     
@@ -32,6 +39,7 @@ class Booker:
         
         u = urlparse(book_server)
         self.activities={}
+        self.background_tasks = set() #strong ref to stop coros being gargage collected early  https://docs.python.org/3/library/asyncio-task.html#id4
         self.host = u.netloc
         self.app_author = "practable" 
         self.app_name = "practable-python-" + u.netloc.replace(".","-") + u.path.replace("/","-")
@@ -104,6 +112,33 @@ class Booker:
             print(r.text)
             raise Exception("could not book %s for %s"%(selected, duration))
     
+    def cancel_booking(self, name):
+        
+        url = self.book_server + "/api/v1/users/" + self.user + "/bookings/" + name
+        
+        r = requests.delete(url, headers=self.headers)  
+        
+    
+        if r.status_code != 404:       
+           print(r.status_code)
+           print(r.text)               
+           raise Exception("could not cancel booking %s"%(name))
+           
+    def cancel_all_bookings(self):
+        
+        self.get_bookings() #refresh current bookings
+        
+        for booking in self.bookings:
+            try:
+                self.cancel_booking(booking["name"])
+            except:
+                pass #ignore the case where we get 500 can't cancel booking that already ended
+            
+        self.get_bookings()
+        
+        if len(self.bookings) > 0:
+            raise Exception("unable to cancel all bookings")
+            
     def check_slot_available(self, slot):
         url = self.book_server + "/api/v1/slots/" +  slot
         r = requests.get(url, headers=self.headers)  
@@ -149,7 +184,8 @@ class Booker:
             user = f.readline()
             if user != "":
                 self.user = user
-                
+                return
+            
         except FileNotFoundError:
             pass
         
@@ -186,14 +222,14 @@ class Booker:
             else:
                 self.unavailable[name]=when["start"]
                 
-    def get_activity(self, name):
-        #get the activity associated with a booking
-        url = self.book_server + "/api/v1/users/" + self.user + "/bookings/" + name
+    def get_activity(self, booking):
+        #get the activity associated with a booking (use the uuid in the name field)
+        url = self.book_server + "/api/v1/users/" + self.user + "/bookings/" + booking
         r = requests.put(url, headers=self.headers)      
         if r.status_code != 200:
             print(r.status_code)
             print(r.text)
-            raise Exception("could not get activity for booking %s"%(name)) 
+            raise Exception("could not get activity for booking %s"%(booking)) 
            
         #remove stale activities    
         activities = self.activities
@@ -203,10 +239,14 @@ class Booker:
                 del self.activities[activity]
                 
         ad = r.json()
+        name = ad["description"]["name"]
         self.activities[name] = ad
-       
         
-           
+    def get_all_activities(self):
+        for booking in self.bookings:
+            self.get_activity(booking["name"])
+        
+        
     def get_bookings(self):
         self.ensure_logged_in()
         url = self.book_server + "/api/v1/users/" + self.user + "/bookings"
@@ -251,32 +291,91 @@ class Booker:
                     self.experiments.append(name)
                     self.experiment_details[name] = v
                     
-    def cancel_booking(self, name):
+    def connect(self, name, which="data"):
+       
+         
+        stream = {}
         
-        url = self.book_server + "/api/v1/users/" + self.user + "/bookings/" + name
-        
-        r = requests.delete(url, headers=self.headers)  
-        
-    
-        if r.status_code != 404:       
-           print(r.status_code)
-           print(r.text)               
-           raise Exception("could not cancel booking %s"%(name))
-           
-    def cancel_all_bookings(self):
-        
-        self.get_bookings() #refresh current bookings
-        
-        for booking in self.bookings:
-            try:
-                self.cancel_booking(booking["name"])
-            except:
-                pass #ignore the case where we get 500 can't cancel booking that already ended
+        try:
+            for s in self.activities[name]["streams"]:
+                if s["for"]==which:
+                    stream = s
+        except KeyError:
+            raise Exception("activity not found for experiment %s"%(name))
             
-        self.get_bookings()
+        if stream == {}:
+            raise Exception("stream %s not found"%(which))
+            
+        url = stream["url"]    
+        token = stream["token"]
+        headers = {'Content-Type':'application/json','Authorization': '{}'.format(token)}
         
-        if len(self.bookings) > 0:
-            raise Exception("unable to cancel all bookings")
+        r = requests.post(url, headers = headers)
+        if r.status_code != 200:
+            print(r.status_code)
+            print(r.text)
+            raise Exception("could not access %s stream %s"%(which, name))
+            
+        return r.json()["uri"]
+    
+
+            
+if __name__ == "__main__":
+   
+ 
+    b = Booker()
+    b.add_group("***REMOVED***")
+    b.get_bookings()
+    b.cancel_all_bookings()
+    b.get_group_details()
+    b.filter_experiments("Spin",number="51");      
+    b.book(timedelta(seconds=15)); 
+    b.get_bookings()   
+    b.get_all_activities()
+    
+    qr = Queue(maxsize=10)
+    qs = Queue(maxsize=10)
+    
+    url = b.connect('Spinner 51 (Open Days)')
+    
+    # threading is probably going to be the easiest way to write tests
+    # BUT draining high frequency messages may be challenging?
+    messages = []
+    
+    with wsconnect(url) as websocket:
+        
+       #websocket.send('{"set":"mode","to":"stop"}')
+       websocket.send('{"set":"mode","to":"position"}')
+       websocket.send('{"set":"parameters","kp":1,"ki":0,"kd":0}')
+       websocket.send('{"set":"position","to":2}')
+       
+       for x in range(100):
+           try:
+               message = websocket.recv()
+               messages.append(json.loads(message))       
+           except json.JSONDecodeError:
+               print(message)
+               continue #typically blank lines
+                      
+
+    ts = []
+    ds = []    
+    for m in messages:
+        for t in m["t"]:
+            ts.append(t)
+        for d in m["d"]:
+            ds.append(d)
+            
+    plt.figure()        
+    plt.plot(ts,ds)
+        
+    #tsa = np.array(ts)
+    #dsa = np.array(ds)
+    #plt.plot(tsa/1e6,dsa)
+    
+        
+
+       
             
         
 
