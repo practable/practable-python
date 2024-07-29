@@ -12,6 +12,7 @@ The user name is stored in the user's configuration directory, or in cwd
 
 from datetime import datetime, timedelta, UTC
 import json
+import math
 import matplotlib.pyplot as plt
 import numpy as np
 import os.path
@@ -365,7 +366,7 @@ class Experiment(object):
         self.url= self.booker.connect(self.name)       
         # https://websockets.readthedocs.io/en/stable/reference/sync/client.html
         self.websocket = wsconnect(self.url)
-        return self.websocket
+        return self 
         
     def __exit__(self, *args):
         self.websocket.close()
@@ -373,12 +374,60 @@ class Experiment(object):
         booking = self.booker.activities[self.name]["booking"]
         self.booker.cancel_booking(booking)
         
+    def recv(self, timeout=None):
+        return self.websocket.recv(timeout=timeout)
+
+    def send(self, message):
+        self.websocket.send(message)
+        time.sleep(0.05) #rate limiting step to ensure messages are separate
         
+
+    def ignore(self, duration):
+        # this needs to use the timestamps in the messages
+        # ignore the data until the timestamps exceed that time
+        # TODO read the timesamps
         
+        endtime = datetime.now() + duration
         
+        #timeout is in seconds, so round up to nearest whole seconds
+        # if this is longer than we want to wait, no worries, because
+        # it only times out if there was no data anyway.
+        timeout = math.ceil(duration.total_seconds())
         
+        count = 0
         
-        
+        while True:
+            try:
+                message = self.recv(timeout=timeout)
+                # save message in case it is an edge case that needs us to
+                # stash it
+
+            except TimeoutError:
+                # timed out, so return
+                return
+     
+            # check for edge case, which is that:
+            # if no message is received while we are ignoring
+            # but then we get one after the ignore duration has expired
+            # but before the timeout we created with whole number
+            # seconds has expired (e.g. a message at 700ms on a 500ms ignore, 
+            # which requires a 1s timeout) then 
+            # we have to stash it to be received by user
+            # in case there are sparsely/unevenly spaced but important 
+            # messages being sent and the ignore is set to a fractional
+            # seconds value. Otherwise we can ignore it.
+            
+            if datetime.now() >= endtime:
+                if count == 0:
+                    #stash message, if it is the first one we get
+                    # and it comes after the expected ignore duration
+                    # but before websocket.recv() second-granularity timeout
+                    # is reached
+                    self.stashed_messages.append(message)
+                return count
+            
+            count += 1 #increment ignore count
+       
             
 if __name__ == "__main__":
     
@@ -386,10 +435,11 @@ if __name__ == "__main__":
    
     with Experiment('***REMOVED***','Spinner 51 (Open Days)', exact=True) as websocket:
         
+        #receive a message to get the initial time stamp - not necessary
         websocket.send('{"set":"mode","to":"stop"}')
-        time.sleep(0.05)
+        #time.sleep(0.05)
         websocket.send('{"set":"mode","to":"position"}')
-        time.sleep(0.05)
+        #time.sleep(0.05)
         websocket.send('{"set":"parameters","kp":1,"ki":0,"kd":0}')
         time.sleep(0.5)
         websocket.send('{"set":"position","to":2}')
@@ -403,6 +453,10 @@ if __name__ == "__main__":
         # during processing breaks?
         # commands to help with data, e.g. turn off reporting, turn it back on again?
         # do we want a failure mode where data is off cos we accidentally turned it off?
+        #reference the initial time stamp when figuring out how long to delay ....
+        # this relies on there being timestamps in the messages, because we're accumulating a big list of messages
+        # while we wait, and reading it quickly. 
+        print(websocket.ignore(timedelta(milliseconds=200)))
         for x in range(100):
             try:
                 message = websocket.recv()
