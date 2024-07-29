@@ -200,20 +200,25 @@ class Booker:
             file.write(user)
         self.user = user    
     
-    def filter_experiments(self, sub, number=""):
+    def filter_experiments(self, sub, number="", exact=False):
         self.filter_name = sub
         self.filter_number = number
         self.available = []
         self.unavailable = {}
         self.listed = []
-        for name in self.experiments:
-            if sub in name:
-                if number == "":
-                    self.listed.append(name)
-                else:
-                    if number in name:
+        
+        if exact==True and sub in self.experiments:
+            self.listed.append(sub)
+            
+        else:        
+        
+            for name in self.experiments:
+                if sub in name:
+                    if number == "":
                         self.listed.append(name)
-                
+                    else:
+                        if number in name:
+                            self.listed.append(name)
                 
         for name in self.listed:
             available_now, when = self.check_slot_available(self.experiment_details[name]["slot"])
@@ -239,6 +244,12 @@ class Booker:
                 del self.activities[activity]
                 
         ad = r.json()
+        # we can only link an activity with a booking at the time we request it
+        # so we need to store that link in the activity to allow cancellation
+        # cancelling all bookings will interfere with other instances operating
+        # on the same machine
+        ad["booking"]=booking #so we can identify which booking to cancel
+        
         name = ad["description"]["name"]
         self.activities[name] = ad
         
@@ -293,7 +304,6 @@ class Booker:
                     
     def connect(self, name, which="data"):
        
-         
         stream = {}
         
         try:
@@ -315,50 +325,137 @@ class Booker:
             print(r.status_code)
             print(r.text)
             raise Exception("could not access %s stream %s"%(which, name))
-            
+        
         return r.json()["uri"]
     
 
+    
+class Experiment(object):
+    # will only be used on one experiment at a time
+    # but the underlying booker object will have the same
+    # user name for all instances, so when booking many experiments
+    # at the same time, each will download all the activitiees etc
+    # shouldn't necessarily be an issue for general users with a few experiments
+    # but for systemwide testing, it might be better to force a username with
+    # a common first part like "system-tester" and then a second part that is
+    # unique to the system it is running on, and then a third part that is unique
+    # to the Experiment instance.
+    def __init__(self, group, name, book_server="", config_in_cwd=False, duration=timedelta(minutes=3), exact=False, number=""):
+        
+        if book_server == "":
+            self.booker = Booker(config_in_cwd=config_in_cwd) #use the default booking server
+        else:    
+            self.booker = Booker(book_server=book_server,config_in_cwd=config_in_cwd)
+            
+        self.booker.add_group(group)
+        self.duration = duration
+        self.exact = exact
+        self.group = group
+        self.name = name
+        self.number = number
+
+       
+    def __enter__(self):
+        self.booker.get_bookings()
+        self.booker.get_group_details()
+        self.booker.filter_experiments(self.name, self.number, self.exact)
+        self.booker.book(self.duration)
+        self.booker.get_bookings()
+        self.booker.get_all_activities()
+        self.url= self.booker.connect(self.name)       
+        # https://websockets.readthedocs.io/en/stable/reference/sync/client.html
+        self.websocket = wsconnect(self.url)
+        return self.websocket
+        
+    def __exit__(self, *args):
+        self.websocket.close()
+        #identify and cancel booking
+        booking = self.booker.activities[self.name]["booking"]
+        self.booker.cancel_booking(booking)
+        
+        
+        
+        
+        
+        
+        
             
 if __name__ == "__main__":
-   
- 
-    b = Booker()
-    b.add_group("***REMOVED***")
-    b.get_bookings()
-    b.cancel_all_bookings()
-    b.get_group_details()
-    b.filter_experiments("Spin",number="51");      
-    b.book(timedelta(seconds=30)); 
-    b.get_bookings()   
-    b.get_all_activities()
     
-    qr = Queue(maxsize=10)
-    qs = Queue(maxsize=10)
-    
-    url = b.connect('Spinner 51 (Open Days)')
-    
-    # threading is probably going to be the easiest way to write tests
-    # BUT draining high frequency messages may be challenging?
     messages = []
-    
-    with wsconnect(url) as websocket:
+   
+    with Experiment('***REMOVED***','Spinner 51 (Open Days)', exact=True) as websocket:
         
-       websocket.send('{"set":"mode","to":"stop"}')
-       time.sleep(1)
-       websocket.send('{"set":"mode","to":"position"}')
-       time.sleep(1)
-       websocket.send('{"set":"parameters","kp":1,"ki":0,"kd":0}')
-       time.sleep(1)
-       websocket.send('{"set":"position","to":2}')
-       
-       for x in range(1000):
-           try:
-               message = websocket.recv()
-               messages.append(json.loads(message))       
-           except json.JSONDecodeError:
-               print(message)
-               continue #typically blank lines
+        websocket.send('{"set":"mode","to":"stop"}')
+        time.sleep(0.05)
+        websocket.send('{"set":"mode","to":"position"}')
+        time.sleep(0.05)
+        websocket.send('{"set":"parameters","kp":1,"ki":0,"kd":0}')
+        time.sleep(0.5)
+        websocket.send('{"set":"position","to":2}')
+        # expect to throw away messages sent while sleeping ... 
+        # e.g. drain(20) #helper func
+        # add helper functions to extract data?
+        # e.g. get 100 steps of t & d
+        # needs to know about sub-arrays as well
+        # and also sub keys
+        # possibly gather data THEN process? to avoid variability in how much data to throw away
+        # during processing breaks?
+        # commands to help with data, e.g. turn off reporting, turn it back on again?
+        # do we want a failure mode where data is off cos we accidentally turned it off?
+        for x in range(100):
+            try:
+                message = websocket.recv()
+                messages.append(json.loads(message))       
+            except json.JSONDecodeError:
+                print("<<" + message + ">>")
+                continue #typically blank lines   
+                
+    # b = Booker()
+    # b.add_group("***REMOVED***")
+    # b.get_bookings()
+    # b.cancel_all_bookings()
+    # b.get_group_details()
+    # b.filter_experiments("Spin",number="51");      
+    # b.book(timedelta(seconds=30)); 
+    # b.get_bookings()   
+    # b.get_all_activities()
+    
+    # qr = Queue(maxsize=10)
+    # qs = Queue(maxsize=10)
+    
+    # url = b.connect('Spinner 51 (Open Days)')
+    
+    # # threading is probably going to be the easiest way to write tests
+    # # BUT draining high frequency messages may be challenging?
+    # messages = []
+    
+    # with wsconnect(url) as websocket:
+        
+    #    websocket.send('{"set":"mode","to":"stop"}')
+    #    time.sleep(0.05)
+    #    websocket.send('{"set":"mode","to":"position"}')
+    #    time.sleep(0.05)
+    #    websocket.send('{"set":"parameters","kp":1,"ki":0,"kd":0}')
+    #    time.sleep(0.5)
+    #    websocket.send('{"set":"position","to":2}')
+    #    # expect to throw away messages sent while sleeping ... 
+    #    # e.g. drain(20) #helper func
+    #    # add helper functions to extract data?
+    #    # e.g. get 100 steps of t & d
+    #    # needs to know about sub-arrays as well
+    #    # and also sub keys
+    #    # possibly gather data THEN process? to avoid variability in how much data to throw away
+    #    # during processing breaks?
+    #    # commands to help with data, e.g. turn off reporting, turn it back on again?
+    #    # do we want a failure mode where data is off cos we accidentally turned it off?
+    #    for x in range(100):
+    #        try:
+    #            message = websocket.recv()
+    #            messages.append(json.loads(message))       
+    #        except json.JSONDecodeError:
+    #            print("<<" + message + ">>")
+    #            continue #typically blank lines
                       
 
     ts = []
@@ -375,9 +472,9 @@ if __name__ == "__main__":
     plt.figure()        
     plt.plot(ts,ds)
         
-    #tsa = np.array(ts)
-    #dsa = np.array(ds)
-    #plt.plot(tsa/1e6,dsa)
+    # #tsa = np.array(ts)
+    # #dsa = np.array(ds)
+    # #plt.plot(tsa/1e6,dsa)
     
         
 
