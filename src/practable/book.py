@@ -199,7 +199,13 @@ class Booker:
         user = r.json()["user_name"]    
         with open(os.path.join(self.ucd,'user'), 'w') as file:
             file.write(user)
-        self.user = user    
+        self.user = user 
+        
+    def set_user(self, user):
+        
+        with open(os.path.join(self.ucd,'user'), 'w') as file:
+            file.write(user)
+        self.user = user        
     
     def filter_experiments(self, sub, number="", exact=False):
         self.filter_name = sub
@@ -240,8 +246,12 @@ class Booker:
         #remove stale activities    
         activities = self.activities
         now = datetime.now(UTC)
+        print("current activities object")
+        print(activities)
         for activity in activities:
-            if activity["when"]["end"] > now:
+            print("Checking Activity")
+            print(activity)
+            if datetime.fromtimestamp(activity["exp"],tz=UTC) > now:
                 del self.activities[activity]
                 
         ad = r.json()
@@ -256,6 +266,7 @@ class Booker:
         
     def get_all_activities(self):
         for booking in self.bookings:
+            print("getting activity for " + booking["name"] + " for " + booking["slot"])
             self.get_activity(booking["name"])
         
         
@@ -312,7 +323,7 @@ class Booker:
                 if s["for"]==which:
                     stream = s
         except KeyError:
-            raise Exception("activity not found for experiment %s"%(name))
+            raise KeyError("activity not found for experiment %s"%(name))
             
         if stream == {}:
             raise Exception("stream %s not found"%(which))
@@ -341,38 +352,72 @@ class Experiment(object):
     # a common first part like "system-tester" and then a second part that is
     # unique to the system it is running on, and then a third part that is unique
     # to the Experiment instance.
-    def __init__(self, group, name, book_server="", config_in_cwd=False, duration=timedelta(minutes=3), exact=False, number=""):
-        
+    
+    # supply user name to access booking made using browser?
+    # default behaviour on exit is to cancel a booking if we made it, not if it
+    # already existed (e.g. was made online)
+    
+    #TODO add a look ahead feature for making bookings "soon" (queueing)
+    #TODO consier different object for fresh booking versus prebooking as behavoour is different?
+    #TODO consider adding e.g. 8 character xcvf-6311 code for each booking that a user can get from bookjs
+    #     along with the necessary example code to use the booking, to simplify the information
+    #     needed to connect to an existing booking; (but without becoming this id after??)
+    #TODO Add a python template option on booking page
+    def __init__(self, group, name, user="", book_server="", config_in_cwd=False, duration=timedelta(minutes=3), exact=False, number="", time_format="ms",time_key="t",cancel_new_booking_on_exit=True, max_wait_to_start=timedelta(minutes=1)):
+
+
         if book_server == "":
             self.booker = Booker(config_in_cwd=config_in_cwd) #use the default booking server
         else:    
             self.booker = Booker(book_server=book_server,config_in_cwd=config_in_cwd)
+        
+        # set a specific user, e.g. online identity used to book the kit already
+        # i.e. a booking we want to use interactively without cancelling it
+        if user != "":    
+            self.booker.set_user(user)
             
         self.booker.add_group(group)
+             
         self.duration = duration
         self.exact = exact
         self.group = group
         self.name = name
         self.number = number
-
-       
+        self.user = user
+        self.cancel_new_booking_on_exit=cancel_new_booking_on_exit
+      
     def __enter__(self):
+        # see if we have an existing booking
         self.booker.get_bookings()
-        self.booker.get_group_details()
-        self.booker.filter_experiments(self.name, self.number, self.exact)
-        self.booker.book(self.duration)
-        self.booker.get_bookings()
+        print("Bookings:")
+        print(self.booker.bookings)
         self.booker.get_all_activities()
-        self.url= self.booker.connect(self.name)       
+        print("Activities:")
+        print(self.booker.activities) 
+        
+        try:
+            self.url= self.booker.connect(self.name)
+            self.cancel_booking_on_exit = False
+        except KeyError:
+            # make a booking
+            self.booker.get_group_details()
+            self.booker.filter_experiments(self.name, self.number, self.exact)
+            self.booker.book(self.duration)
+            self.booker.get_bookings()
+            self.booker.get_all_activities()
+            self.url= self.booker.connect(self.name)
+            self.cancel_booking_on_exit = self.cancel_new_booking_on_exit
+            
         # https://websockets.readthedocs.io/en/stable/reference/sync/client.html
         self.websocket = wsconnect(self.url)
         return self 
         
     def __exit__(self, *args):
         self.websocket.close()
-        #identify and cancel booking
-        booking = self.booker.activities[self.name]["booking"]
-        self.booker.cancel_booking(booking)
+        if self.cancel_booking_on_exit:
+            #identify and cancel booking
+            booking = self.booker.activities[self.name]["booking"]
+            self.booker.cancel_booking(booking)
         
     def recv(self, timeout=None):
         return self.websocket.recv(timeout=timeout)
@@ -433,7 +478,7 @@ if __name__ == "__main__":
     
     messages = []
    
-    with Experiment('***REMOVED***','Spinner 51 (Open Days)', exact=True) as websocket:
+    with Experiment('***REMOVED***','Spinner 51 (Open Days)', user="***REMOVED***", exact=True) as websocket:
         
         #receive a message to get the initial time stamp - not necessary
         websocket.send('{"set":"mode","to":"stop"}')
@@ -456,8 +501,8 @@ if __name__ == "__main__":
         #reference the initial time stamp when figuring out how long to delay ....
         # this relies on there being timestamps in the messages, because we're accumulating a big list of messages
         # while we wait, and reading it quickly. 
-        print(websocket.ignore(timedelta(milliseconds=200)))
-        for x in range(100):
+        #print(websocket.ignore(timedelta(milliseconds=200)))
+        for x in range(200):
             try:
                 message = websocket.recv()
                 messages.append(json.loads(message))       
