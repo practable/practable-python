@@ -9,7 +9,7 @@ The user name is stored in the user's configuration directory, or in cwd
 @author: tim
 
 """
-
+import collections.abc
 from datetime import datetime, timedelta, UTC
 import json
 import math
@@ -18,7 +18,6 @@ import numpy as np
 import os.path
 from platformdirs import user_config_dir
 from pathlib import Path
-from queue import Queue
 import random
 import requests
 import time
@@ -359,7 +358,22 @@ class Experiment(object):
     #     along with the necessary example code to use the booking, to simplify the information
     #     needed to connect to an existing booking; (but without becoming this id after??)
     #TODO Add a python template option on booking page
-    def __init__(self, group, name, user="", book_server="", config_in_cwd=False, duration=timedelta(minutes=3), exact=False, number="", time_format="ms",time_key="t",cancel_new_booking_on_exit=True, max_wait_to_start=timedelta(minutes=1)):
+    # Note: we handle keys search syntax ourselves, rather than use jq, because jupyter notebooks won't have jq installed
+    # and the python module is just a wrapper to that executable, not an actual re-implementation of it.
+    def __init__(self, 
+                 group, 
+                 name, 
+                 user="",
+                 book_server="", 
+                 config_in_cwd=False,
+                 duration=timedelta(minutes=3),
+                 exact=False,
+                 number="", 
+                 time_format="ms",
+                 time_key="t",
+                 key_separator="/",
+                 cancel_new_booking_on_exit=True, 
+                 max_wait_to_start=timedelta(minutes=1)):
 
 
         if book_server == "":
@@ -367,22 +381,25 @@ class Experiment(object):
         else:    
             self.booker = Booker(book_server=book_server,config_in_cwd=config_in_cwd)
         
-        # set a specific user, e.g. online identity used to book the kit already
-        # i.e. a booking we want to use interactively without cancelling it
-        if user != "":    
-            self.booker.set_user(user)
             
-        self.booker.add_group(group)
-             
         self.duration = duration
         self.exact = exact
         self.group = group
+        self.key_separator = key_separator
         self.name = name
         self.number = number
+        self.time_format = time_format
+        self.time_key = time_key
         self.user = user
         self.cancel_new_booking_on_exit=cancel_new_booking_on_exit
       
     def __enter__(self):
+        # set a specific user, e.g. online identity used to book the kit already
+        # i.e. a booking we want to use interactively without cancelling it
+        if self.user != "":    
+            self.booker.set_user(self.user)
+            
+        self.booker.add_group(self.group)
         # see if we have an existing booking
         self.booker.get_bookings()
         self.booker.get_all_activities()
@@ -411,7 +428,7 @@ class Experiment(object):
             booking = self.booker.activities[self.name]["booking"]
             self.booker.cancel_booking(booking)
             
-    def collect(self, count, timeout=None):
+    def collect(self, count, timeout=None, verbose=True):
         messages = []
         collected = 0
         
@@ -422,14 +439,39 @@ class Experiment(object):
                     if line != "":
                         messages.append(json.loads(line))
                         collected += 1
-                        printProgressBar(collected, count, prefix = f'Collecting {count} messages', suffix = 'Complete', length = 50)
+                        if verbose:
+                            printProgressBar(collected, count, prefix = f'Collecting {count} messages', suffix = 'Complete', length = 50)
                 except json.JSONDecodeError:
                     print("Warning could not decode as JSON:" + line)
+        
+        if verbose:
+            print(end="\n") #make sure next message does not overwrite completed progress bar
         return messages            
 
     def command(self, message):
         print("Command: " + message)
         self.send(message)        
+        
+    def extract(self, obj, key, separator="/"):
+        
+        # Extract a key:value pair from an object
+        # The specified key may be several levels down in the object
+        # For example, we may need to find time values
+        # These may not be at the top level of the object
+        # e.g. key="data/time" means we're returning message["data"]["time"] 
+        
+        keys = key.split(separator)
+
+        if len(keys) == 0:
+            return None
+        
+        v = obj
+        try:
+            for k in keys:
+                v = v[k]            
+                return v
+        except KeyError:
+            raise KeyError("time key not found in this message")
                 
     def recv(self, timeout=None):
         return self.websocket.recv(timeout=timeout)
@@ -438,10 +480,48 @@ class Experiment(object):
         self.websocket.send(message)
         time.sleep(0.05) #rate limiting step to ensure messages are separate
 
-    def ignore(self, duration):
+    def ignore(self, duration, timeout=None, verbose=True):
         # this needs to use the timestamps in the messages
         # ignore the data until the timestamps exceed that time
         # TODO read the timesamps
+        
+        if self.time_format != "ms":
+            raise KeyError(f"Unknown time_format {self.time_format}, valid options are: ms")
+      
+
+
+        while True:
+            
+            first = self.collect(1, timeout=timeout, verbose=False)
+            # the value is either a single time value, or an array of them
+            # we exclude handling arrays of sub-objects each containing a time-stamp
+            # because this complicates the filter implementation
+            
+            try:
+                times = self.extract(first[0],self.time_key,separator=self.key_separator)
+                break
+            except KeyError:
+                continue
+            
+        
+        t0 = timedelta()
+        
+        if self.time_format == "ms":
+            if isinstance(times, (collections.abc.Sequence, np.ndarray)) and not isinstance(times, str):
+                t0 = timedelta(milliseconds=times[0])
+            else:
+                t0 = timedelta(milliseconds=times)
+        else:
+            return    #placeholder for other time formats, shouldn't get to here just now
+        
+        
+   
+        t1 = t0 + duration #the time we're waiting for, in the messages
+        
+        # we're tracking two different forms of time here
+        # the time in the messages, if we are getting them
+        # and the time that has passed on our own clock, if we're not
+        # we need to stop ignoring if there are no messages in the given time
         
         endtime = datetime.now() + duration
         
@@ -453,15 +533,14 @@ class Experiment(object):
         count = 0
         
         while True:
+            
             try:
-                message = self.recv(timeout=timeout)
-                # save message in case it is an edge case that needs us to
-                # stash it
-
+                messages = self.collect(1, timeout=timeout, verbose=False)
+                
             except TimeoutError:
                 # timed out, so return
                 return
-     
+        
             # check for edge case, which is that:
             # if no message is received while we are ignoring
             # but then we get one after the ignore duration has expired
@@ -479,10 +558,41 @@ class Experiment(object):
                     # and it comes after the expected ignore duration
                     # but before websocket.recv() second-granularity timeout
                     # is reached
-                    self.stashed_messages.append(message)
+                    for message in messages:
+                        self.stashed_messages.append(message)
                 return count
             
-            count += 1 #increment ignore count
+            count += len(messages) #increment ignore count
+            
+            # check if the time in the message has reached the time we are
+            # waiting for, t1
+            
+            #want the last message, as that is the most recent
+            try:
+                times = self.extract(messages[-1],self.time_key,separator=self.key_separator)
+            except KeyError:
+                continue #no times in this message, so keep checking
+            
+            t1 = timedelta()
+        
+            if self.time_format == "ms":
+                if isinstance(times, (collections.abc.Sequence, np.ndarray)) and not isinstance(times, str):
+                    t1 = timedelta(milliseconds=times[-1])
+                else:
+                    t1 = timedelta(milliseconds=times)
+            else:
+                return    #placeholder for other time formats, shouldn't get to here just now       
+        
+         
+            if verbose:
+                printProgressBar((t1-t0).total_seconds(), duration.total_seconds(), prefix = f'Ignoring messages for {duration.total_seconds()} seconds', suffix = 'Complete', length = 50)
+            if (t1 - t0) > duration:
+                print(end="\n") #ensure next line does not overwrite our finished progress bar
+                return count
+   
+        
+            
+            
 
 # Print iterations progress
 # https://stackoverflow.com/questions/3173320/text-progress-bar-in-terminal-with-block-characters
@@ -506,121 +616,132 @@ def printProgressBar (iteration, total, prefix = '', suffix = '', decimals = 1, 
     # Print New Line on Complete
     if iteration == total: 
         print()        
+
+
+    
             
 if __name__ == "__main__":
     
-    messages = []
-   
-    with Experiment('***REMOVED***','Spinner 51 (Open Days)', user="***REMOVED***", exact=True) as expt:
-        
-        #receive a message to get the initial time stamp - not necessary
-        expt.command('{"set":"mode","to":"stop"}')
-        #time.sleep(0.05)
-        expt.command('{"set":"mode","to":"position"}')
-        #time.sleep(0.05)
-        expt.command('{"set":"parameters","kp":1,"ki":0,"kd":0}')
-        time.sleep(0.5)
-        expt.command('{"set":"position","to":2}')
-        # expect to throw away messages sent while sleeping ... 
-        # e.g. drain(20) #helper func
-        # add helper functions to extract data?
-        # e.g. get 100 steps of t & d
-        # needs to know about sub-arrays as well
-        # and also sub keys
-        # possibly gather data THEN process? to avoid variability in how much data to throw away
-        # during processing breaks?
-        # commands to help with data, e.g. turn off reporting, turn it back on again?
-        # do we want a failure mode where data is off cos we accidentally turned it off?
-        #reference the initial time stamp when figuring out how long to delay ....
-        # this relies on there being timestamps in the messages, because we're accumulating a big list of messages
-        # while we wait, and reading it quickly. 
-        #print(websocket.ignore(timedelta(milliseconds=200)))
-        expt.collect(200)
-        
-        # for x in range(200):
-        #     message = websocket.recv()
-        #     for line in message.splitlines():
-        #         try:
-        #             #print("<"+line+">")
-        #             if line != "":
-        #                 messages.append(json.loads(line))       
-        #         except json.JSONDecodeError:
-        #             print("oops" + line)
-                    
-                
-    # b = Booker()
-    # b.add_group("***REMOVED***")
-    # b.get_bookings()
-    # b.cancel_all_bookings()
-    # b.get_group_details()
-    # b.filter_experiments("Spin",number="51");      
-    # b.book(timedelta(seconds=30)); 
-    # b.get_bookings()   
-    # b.get_all_activities()
+    #a = Experiment("","")
+    #obj = {"a":{"b":[2,3],"c":3}}
+    #b = a.extract(obj,"a/b")
+    #print(b)
     
-    # qr = Queue(maxsize=10)
-    # qs = Queue(maxsize=10)
+    if True: 
     
-    # url = b.connect('Spinner 51 (Open Days)')
-    
-    # # threading is probably going to be the easiest way to write tests
-    # # BUT draining high frequency messages may be challenging?
-    # messages = []
-    
-    # with wsconnect(url) as websocket:
-        
-    #    websocket.send('{"set":"mode","to":"stop"}')
-    #    time.sleep(0.05)
-    #    websocket.send('{"set":"mode","to":"position"}')
-    #    time.sleep(0.05)
-    #    websocket.send('{"set":"parameters","kp":1,"ki":0,"kd":0}')
-    #    time.sleep(0.5)
-    #    websocket.send('{"set":"position","to":2}')
-    #    # expect to throw away messages sent while sleeping ... 
-    #    # e.g. drain(20) #helper func
-    #    # add helper functions to extract data?
-    #    # e.g. get 100 steps of t & d
-    #    # needs to know about sub-arrays as well
-    #    # and also sub keys
-    #    # possibly gather data THEN process? to avoid variability in how much data to throw away
-    #    # during processing breaks?
-    #    # commands to help with data, e.g. turn off reporting, turn it back on again?
-    #    # do we want a failure mode where data is off cos we accidentally turned it off?
-    #    for x in range(100):
-    #        try:
-    #            message = websocket.recv()
-    #            messages.append(json.loads(message))       
-    #        except json.JSONDecodeError:
-    #            print("<<" + message + ">>")
-    #            continue #typically blank lines
-                      
-
-    ts = []
-    ds = []    
-    for m in messages:
-        try:
-            for t in m["t"]:
-                ts.append(t)
-            for d in m["d"]:
-                ds.append(d)
-        except KeyError:
-            continue
-        
-    plt.figure()        
-    plt.plot(ts,ds)
-        
-    # #tsa = np.array(ts)
-    # #dsa = np.array(ds)
-    # #plt.plot(tsa/1e6,dsa)
-    
-        
-
+        messages = []
        
+        with Experiment('***REMOVED***','Spinner 51 (Open Days)', user="***REMOVED***", exact=True) as expt:
             
+            #receive a message to get the initial time stamp - not necessary
+            expt.command('{"set":"mode","to":"stop"}')
+            #time.sleep(0.05)
+            expt.command('{"set":"mode","to":"position"}')
+            #time.sleep(0.05)
+            expt.command('{"set":"parameters","kp":1,"ki":0,"kd":0}')
+            time.sleep(0.5)
+            expt.command('{"set":"position","to":2}')
+            # expect to throw away messages sent while sleeping ... 
+            # e.g. drain(20) #helper func
+            # add helper functions to extract data?
+            # e.g. get 100 steps of t & d
+            # needs to know about sub-arrays as well
+            # and also sub keys
+            # possibly gather data THEN process? to avoid variability in how much data to throw away
+            # during processing breaks?
+            # commands to help with data, e.g. turn off reporting, turn it back on again?
+            # do we want a failure mode where data is off cos we accidentally turned it off?
+            #reference the initial time stamp when figuring out how long to delay ....
+            # this relies on there being timestamps in the messages, because we're accumulating a big list of messages
+            # while we wait, and reading it quickly. 
+            #print(websocket.ignore(timedelta(milliseconds=200)))
+            expt.ignore(timedelta(milliseconds=1000))
+            expt.collect(200)
+            
+            # for x in range(200):
+            #     message = websocket.recv()
+            #     for line in message.splitlines():
+            #         try:
+            #             #print("<"+line+">")
+            #             if line != "":
+            #                 messages.append(json.loads(line))       
+            #         except json.JSONDecodeError:
+            #             print("oops" + line)
+                        
+                    
+        # b = Booker()
+        # b.add_group("***REMOVED***")
+        # b.get_bookings()
+        # b.cancel_all_bookings()
+        # b.get_group_details()
+        # b.filter_experiments("Spin",number="51");      
+        # b.book(timedelta(seconds=30)); 
+        # b.get_bookings()   
+        # b.get_all_activities()
         
-
+        # qr = Queue(maxsize=10)
+        # qs = Queue(maxsize=10)
+        
+        # url = b.connect('Spinner 51 (Open Days)')
+        
+        # # threading is probably going to be the easiest way to write tests
+        # # BUT draining high frequency messages may be challenging?
+        # messages = []
+        
+        # with wsconnect(url) as websocket:
+            
+        #    websocket.send('{"set":"mode","to":"stop"}')
+        #    time.sleep(0.05)
+        #    websocket.send('{"set":"mode","to":"position"}')
+        #    time.sleep(0.05)
+        #    websocket.send('{"set":"parameters","kp":1,"ki":0,"kd":0}')
+        #    time.sleep(0.5)
+        #    websocket.send('{"set":"position","to":2}')
+        #    # expect to throw away messages sent while sleeping ... 
+        #    # e.g. drain(20) #helper func
+        #    # add helper functions to extract data?
+        #    # e.g. get 100 steps of t & d
+        #    # needs to know about sub-arrays as well
+        #    # and also sub keys
+        #    # possibly gather data THEN process? to avoid variability in how much data to throw away
+        #    # during processing breaks?
+        #    # commands to help with data, e.g. turn off reporting, turn it back on again?
+        #    # do we want a failure mode where data is off cos we accidentally turned it off?
+        #    for x in range(100):
+        #        try:
+        #            message = websocket.recv()
+        #            messages.append(json.loads(message))       
+        #        except json.JSONDecodeError:
+        #            print("<<" + message + ">>")
+        #            continue #typically blank lines
+                          
+    
+        ts = []
+        ds = []    
+        for m in messages:
+            try:
+                for t in m["t"]:
+                    ts.append(t)
+                for d in m["d"]:
+                    ds.append(d)
+            except KeyError:
+                continue
+            
+        plt.figure()        
+        plt.plot(ts,ds)
+            
+        # #tsa = np.array(ts)
+        # #dsa = np.array(ds)
+        # #plt.plot(tsa/1e6,dsa)
+        
+            
+    
            
-   
+                
+            
+    
+               
+       
 
 
 
