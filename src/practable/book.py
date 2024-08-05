@@ -388,6 +388,7 @@ class Experiment(object):
         self.key_separator = key_separator
         self.name = name
         self.number = number
+        self.stashed_messages = []
         self.time_format = time_format
         self.time_key = time_key
         self.user = user
@@ -428,28 +429,49 @@ class Experiment(object):
             booking = self.booker.activities[self.name]["booking"]
             self.booker.cancel_booking(booking)
             
-    def collect(self, count, timeout=None, verbose=True):
+    def collect_count(self, count, timeout=None, verbose=True):
         messages = []
         collected = 0
         
         while collected < count:
-            message = self.recv(timeout=timeout)
-            for line in message.splitlines():
-                try:
-                    if line != "":
-                        messages.append(json.loads(line))
-                        collected += 1
-                        if verbose:
-                            printProgressBar(collected, count, prefix = f'Collecting {count} messages', suffix = 'Complete', length = 50)
-                except json.JSONDecodeError:
-                    print("Warning could not decode as JSON:" + line)
+            try:
+                # getg next stashed message
+                message = self.stashed_messages.pop(0)
+                messages.append(message)
+                collected += 1
+                
+            except IndexError: # no stashed messages
+                message = self.recv(timeout=timeout)
+                #print("recevied message: " + message)
+                
+                for line in message.splitlines():
+                    try:
+                        if line != "":
+                            obj = json.loads(line)
+       
+                            if collected < count:
+                                messages.append(obj)
+                                collected += 1
+                            else: 
+                                # got too many messages at once, now exceeded count
+                                # so stash messages not needed
+                                self.stashed_messages.append(obj)
+                    except json.JSONDecodeError:
+                        print("Warning could not decode as JSON:" + line)                            
+            if verbose:
+                printProgressBar(collected, count, prefix = f'Collecting {count} messages', suffix = 'Complete', length = 50)
+                            
+
         
         if verbose:
             print(end="\n") #make sure next message does not overwrite completed progress bar
+            
+            
         return messages            
 
-    def command(self, message):
-        print("Command: " + message)
+    def command(self, message, verbose=True):
+        if verbose:
+            print("Command: " + message)
         self.send(message)        
         
     def extract(self, obj, key, separator="/"):
@@ -481,26 +503,42 @@ class Experiment(object):
         time.sleep(0.05) #rate limiting step to ensure messages are separate
 
     def ignore(self, duration_seconds, timeout=None, verbose=True):
+        return self.collect_duration(duration_seconds, timeout=None, verbose=True, ignore=True) 
+    
+    def collect(self, duration_seconds, timeout=None, verbose=True):
+        return self.collect_duration(duration_seconds, timeout=None, verbose=True, ignore=False)
+                
+    def collect_duration(self, duration_seconds, timeout=None, verbose=True, ignore=False):
+        # implementation of collect() and ignore()
+        # select ignore=True for ignore()
         # duration is a float, to make interface easier to type/understand for new users
-        # ignore(0.5)  vs
-        # ignore(timedelta(milliseconds=500))
+        # e.g. 
+        # collect(0.5)  vs
+        # collect(timedelta(milliseconds=500))
+        collected = []
+        
+        mode = "Collecting"
+        if ignore:
+            mode = "Ignoring"
         
         duration = timedelta(seconds=duration_seconds)
         
         if self.time_format != "ms":
             raise KeyError(f"Unknown time_format {self.time_format}, valid options are: ms")
-      
-
 
         while True:
             
-            first = self.collect(1, timeout=timeout, verbose=False)
+            messages = self.collect_count(1, timeout=timeout, verbose=False)
             # the value is either a single time value, or an array of them
             # we exclude handling arrays of sub-objects each containing a time-stamp
             # because this complicates the filter implementation
             
+            if not ignore:
+                for message in messages:
+                    collected.append(message) 
+            
             try:
-                times = self.extract(first[0],self.time_key,separator=self.key_separator)
+                times = self.extract(messages[0],self.time_key,separator=self.key_separator)
                 break
             except KeyError:
                 continue
@@ -514,7 +552,7 @@ class Experiment(object):
             else:
                 t0 = timedelta(milliseconds=times)
         else:
-            return    #placeholder for other time formats, shouldn't get to here just now
+            raise Exception("time_format not implemented")
         
         
    
@@ -537,13 +575,13 @@ class Experiment(object):
         while True:
             
             try:
-                messages = self.collect(1, timeout=timeout, verbose=False)
+                messages = self.collect_count(1, timeout=timeout, verbose=False)
                 
             except TimeoutError:
                 # timed out, so return
-                return
+                return collected
         
-            # check for edge case, which is that:
+            # check for edge case for ignore, which is that:
             # if no message is received while we are ignoring
             # but then we get one after the ignore duration has expired
             # but before the timeout we created with whole number
@@ -554,7 +592,7 @@ class Experiment(object):
             # messages being sent and the ignore is set to a fractional
             # seconds value. Otherwise we can ignore it.
             
-            if datetime.now() >= endtime:
+            if ignore and datetime.now() >= endtime:
                 if count == 0:
                     #stash message, if it is the first one we get
                     # and it comes after the expected ignore duration
@@ -562,8 +600,11 @@ class Experiment(object):
                     # is reached
                     for message in messages:
                         self.stashed_messages.append(message)
-                return count
+                return collected
             
+            if not ignore:
+                for message in messages:
+                    collected.append(message)
             count += len(messages) #increment ignore count
             
             # check if the time in the message has reached the time we are
@@ -583,7 +624,7 @@ class Experiment(object):
                 else:
                     t1 = timedelta(milliseconds=times)
             else:
-                return    #placeholder for other time formats, shouldn't get to here just now       
+                raise Exception("time_format not implemented")      
         
          
             if verbose:
@@ -595,10 +636,10 @@ class Experiment(object):
                 total = duration.total_seconds()
                 if amount > total:
                     amount = total
-                printProgressBar(amount, total, prefix = f'Ignoring messages for {duration.total_seconds()} seconds', suffix = 'Complete', length = 50)
+                printProgressBar(amount, total, prefix = f'{mode} messages for {duration.total_seconds()} seconds', suffix = 'Complete', length = 50)
             if (t1 - t0) > duration:
                 print(end="\n") #ensure next line does not overwrite our finished progress bar
-                return count
+                return collected
    
         
             
@@ -645,85 +686,18 @@ if __name__ == "__main__":
             
             #receive a message to get the initial time stamp - not necessary
             expt.command('{"set":"mode","to":"stop"}')
-            #time.sleep(0.05)
+
             expt.command('{"set":"mode","to":"position"}')
-            #time.sleep(0.05)
+
             expt.command('{"set":"parameters","kp":1,"ki":0,"kd":0}')
             time.sleep(0.5)
             expt.command('{"set":"position","to":2}')
-            # expect to throw away messages sent while sleeping ... 
-            # e.g. drain(20) #helper func
-            # add helper functions to extract data?
-            # e.g. get 100 steps of t & d
-            # needs to know about sub-arrays as well
-            # and also sub keys
-            # possibly gather data THEN process? to avoid variability in how much data to throw away
-            # during processing breaks?
-            # commands to help with data, e.g. turn off reporting, turn it back on again?
-            # do we want a failure mode where data is off cos we accidentally turned it off?
-            #reference the initial time stamp when figuring out how long to delay ....
-            # this relies on there being timestamps in the messages, because we're accumulating a big list of messages
-            # while we wait, and reading it quickly. 
-            #print(websocket.ignore(timedelta(milliseconds=200)))
-            expt.ignore(1.0)
-            expt.collect(200)
+
+            expt.ignore(0.5)
+            messages = expt.collect(3.0)
             
-            # for x in range(200):
-            #     message = websocket.recv()
-            #     for line in message.splitlines():
-            #         try:
-            #             #print("<"+line+">")
-            #             if line != "":
-            #                 messages.append(json.loads(line))       
-            #         except json.JSONDecodeError:
-            #             print("oops" + line)
-                        
-                    
-        # b = Booker()
-        # b.add_group("***REMOVED***")
-        # b.get_bookings()
-        # b.cancel_all_bookings()
-        # b.get_group_details()
-        # b.filter_experiments("Spin",number="51");      
-        # b.book(timedelta(seconds=30)); 
-        # b.get_bookings()   
-        # b.get_all_activities()
-        
-        # qr = Queue(maxsize=10)
-        # qs = Queue(maxsize=10)
-        
-        # url = b.connect('Spinner 51 (Open Days)')
-        
-        # # threading is probably going to be the easiest way to write tests
-        # # BUT draining high frequency messages may be challenging?
-        # messages = []
-        
-        # with wsconnect(url) as websocket:
-            
-        #    websocket.send('{"set":"mode","to":"stop"}')
-        #    time.sleep(0.05)
-        #    websocket.send('{"set":"mode","to":"position"}')
-        #    time.sleep(0.05)
-        #    websocket.send('{"set":"parameters","kp":1,"ki":0,"kd":0}')
-        #    time.sleep(0.5)
-        #    websocket.send('{"set":"position","to":2}')
-        #    # expect to throw away messages sent while sleeping ... 
-        #    # e.g. drain(20) #helper func
-        #    # add helper functions to extract data?
-        #    # e.g. get 100 steps of t & d
-        #    # needs to know about sub-arrays as well
-        #    # and also sub keys
-        #    # possibly gather data THEN process? to avoid variability in how much data to throw away
-        #    # during processing breaks?
-        #    # commands to help with data, e.g. turn off reporting, turn it back on again?
-        #    # do we want a failure mode where data is off cos we accidentally turned it off?
-        #    for x in range(100):
-        #        try:
-        #            message = websocket.recv()
-        #            messages.append(json.loads(message))       
-        #        except json.JSONDecodeError:
-        #            print("<<" + message + ">>")
-        #            continue #typically blank lines
+      
+  
                           
     
         ts = []
