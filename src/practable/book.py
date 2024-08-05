@@ -246,11 +246,7 @@ class Booker:
         #remove stale activities    
         activities = self.activities
         now = datetime.now(UTC)
-        print("current activities object")
-        print(activities)
         for activity in activities:
-            print("Checking Activity")
-            print(activity)
             if datetime.fromtimestamp(activity["exp"],tz=UTC) > now:
                 del self.activities[activity]
                 
@@ -266,7 +262,7 @@ class Booker:
         
     def get_all_activities(self):
         for booking in self.bookings:
-            print("getting activity for " + booking["name"] + " for " + booking["slot"])
+            #print("getting activity for " + booking["name"] + " for " + booking["slot"])
             self.get_activity(booking["name"])
         
         
@@ -389,11 +385,7 @@ class Experiment(object):
     def __enter__(self):
         # see if we have an existing booking
         self.booker.get_bookings()
-        print("Bookings:")
-        print(self.booker.bookings)
         self.booker.get_all_activities()
-        print("Activities:")
-        print(self.booker.activities) 
         
         try:
             self.url= self.booker.connect(self.name)
@@ -418,14 +410,33 @@ class Experiment(object):
             #identify and cancel booking
             booking = self.booker.activities[self.name]["booking"]
             self.booker.cancel_booking(booking)
+            
+    def collect(self, count, timeout=None):
+        messages = []
+        collected = 0
         
+        while collected < count:
+            message = self.recv(timeout=timeout)
+            for line in message.splitlines():
+                try:
+                    if line != "":
+                        messages.append(json.loads(line))
+                        collected += 1
+                        printProgressBar(collected, count, prefix = f'Collecting {count} messages', suffix = 'Complete', length = 50)
+                except json.JSONDecodeError:
+                    print("Warning could not decode as JSON:" + line)
+        return messages            
+
+    def command(self, message):
+        print("Command: " + message)
+        self.send(message)        
+                
     def recv(self, timeout=None):
         return self.websocket.recv(timeout=timeout)
 
     def send(self, message):
         self.websocket.send(message)
         time.sleep(0.05) #rate limiting step to ensure messages are separate
-        
 
     def ignore(self, duration):
         # this needs to use the timestamps in the messages
@@ -472,22 +483,44 @@ class Experiment(object):
                 return count
             
             count += 1 #increment ignore count
-       
+
+# Print iterations progress
+# https://stackoverflow.com/questions/3173320/text-progress-bar-in-terminal-with-block-characters
+def printProgressBar (iteration, total, prefix = '', suffix = '', decimals = 1, length = 100, fill = '█', printEnd = "\r"):
+    """
+    Call in a loop to create terminal progress bar
+    @params:
+        iteration   - Required  : current iteration (Int)
+        total       - Required  : total iterations (Int)
+        prefix      - Optional  : prefix string (Str)
+        suffix      - Optional  : suffix string (Str)
+        decimals    - Optional  : positive number of decimals in percent complete (Int)
+        length      - Optional  : character length of bar (Int)
+        fill        - Optional  : bar fill character (Str)
+        printEnd    - Optional  : end character (e.g. "\r", "\r\n") (Str)
+    """
+    percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
+    filledLength = int(length * iteration // total)
+    bar = fill * filledLength + '-' * (length - filledLength)
+    print(f'\r{prefix} |{bar}| {percent}% {suffix}', end = printEnd)
+    # Print New Line on Complete
+    if iteration == total: 
+        print()        
             
 if __name__ == "__main__":
     
     messages = []
    
-    with Experiment('***REMOVED***','Spinner 51 (Open Days)', user="***REMOVED***", exact=True) as websocket:
+    with Experiment('***REMOVED***','Spinner 51 (Open Days)', user="***REMOVED***", exact=True) as expt:
         
         #receive a message to get the initial time stamp - not necessary
-        websocket.send('{"set":"mode","to":"stop"}')
+        expt.command('{"set":"mode","to":"stop"}')
         #time.sleep(0.05)
-        websocket.send('{"set":"mode","to":"position"}')
+        expt.command('{"set":"mode","to":"position"}')
         #time.sleep(0.05)
-        websocket.send('{"set":"parameters","kp":1,"ki":0,"kd":0}')
+        expt.command('{"set":"parameters","kp":1,"ki":0,"kd":0}')
         time.sleep(0.5)
-        websocket.send('{"set":"position","to":2}')
+        expt.command('{"set":"position","to":2}')
         # expect to throw away messages sent while sleeping ... 
         # e.g. drain(20) #helper func
         # add helper functions to extract data?
@@ -502,15 +535,17 @@ if __name__ == "__main__":
         # this relies on there being timestamps in the messages, because we're accumulating a big list of messages
         # while we wait, and reading it quickly. 
         #print(websocket.ignore(timedelta(milliseconds=200)))
-        for x in range(200):
-            message = websocket.recv()
-            for line in message.splitlines():
-                try:
-                    #print("<"+line+">")
-                    if line != "":
-                        messages.append(json.loads(line))       
-                except json.JSONDecodeError:
-                    print("oops" + line)
+        expt.collect(200)
+        
+        # for x in range(200):
+        #     message = websocket.recv()
+        #     for line in message.splitlines():
+        #         try:
+        #             #print("<"+line+">")
+        #             if line != "":
+        #                 messages.append(json.loads(line))       
+        #         except json.JSONDecodeError:
+        #             print("oops" + line)
                     
                 
     # b = Booker()
