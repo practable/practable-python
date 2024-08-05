@@ -681,18 +681,16 @@ def printProgressBar (iteration, total, prefix = '', suffix = '', decimals = 1, 
     
             
 if __name__ == "__main__":
-    
-    
+   
     messages = []
    
     with Experiment('***REMOVED***','Spinner 51 (Open Days)', user="***REMOVED***", exact=True) as expt:
         
-        #receive a message to get the initial time stamp - not necessary
+        # Command a step of 2 radians & collect the data
         expt.command('{"set":"mode","to":"stop"}')
-
         expt.command('{"set":"mode","to":"position"}')
-
         expt.command('{"set":"parameters","kp":1,"ki":0,"kd":0}')
+
         time.sleep(0.5)
             
         expt.command('{"set":"position","to":2}')    
@@ -700,12 +698,15 @@ if __name__ == "__main__":
         expt.ignore(0.5)
         messages = expt.collect(1.5)
         
+        # Process the data
         ts = expt.extract_series(messages, "t")
         ds = expt.extract_series(messages, "d")
         cs = expt.extract_series(messages, "c")
         
         t = np.array(ts)
         t = t - t[0]
+        
+        # Plot the data
         plt.figure()        
         plt.plot(t/1e3,ds,'-b',label="position")
         plt.plot(t/1e3,cs,':r',label="set point")
