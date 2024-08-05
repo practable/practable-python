@@ -480,10 +480,12 @@ class Experiment(object):
         self.websocket.send(message)
         time.sleep(0.05) #rate limiting step to ensure messages are separate
 
-    def ignore(self, duration, timeout=None, verbose=True):
-        # this needs to use the timestamps in the messages
-        # ignore the data until the timestamps exceed that time
-        # TODO read the timesamps
+    def ignore(self, duration_seconds, timeout=None, verbose=True):
+        # duration is a float, to make interface easier to type/understand for new users
+        # ignore(0.5)  vs
+        # ignore(timedelta(milliseconds=500))
+        
+        duration = timedelta(seconds=duration_seconds)
         
         if self.time_format != "ms":
             raise KeyError(f"Unknown time_format {self.time_format}, valid options are: ms")
@@ -585,7 +587,15 @@ class Experiment(object):
         
          
             if verbose:
-                printProgressBar((t1-t0).total_seconds(), duration.total_seconds(), prefix = f'Ignoring messages for {duration.total_seconds()} seconds', suffix = 'Complete', length = 50)
+                # progress bar tends to overshoot, because there are multiple timestamps per message
+                # Ignoring messages for 1.0 seconds |██████████████████████████████████████████████████| 101.8% Complete
+                # let's hide that under the rug for now, to be easier for new users
+                
+                amount = (t1-t0).total_seconds()
+                total = duration.total_seconds()
+                if amount > total:
+                    amount = total
+                printProgressBar(amount, total, prefix = f'Ignoring messages for {duration.total_seconds()} seconds', suffix = 'Complete', length = 50)
             if (t1 - t0) > duration:
                 print(end="\n") #ensure next line does not overwrite our finished progress bar
                 return count
@@ -655,7 +665,7 @@ if __name__ == "__main__":
             # this relies on there being timestamps in the messages, because we're accumulating a big list of messages
             # while we wait, and reading it quickly. 
             #print(websocket.ignore(timedelta(milliseconds=200)))
-            expt.ignore(timedelta(milliseconds=1000))
+            expt.ignore(1.0)
             expt.collect(200)
             
             # for x in range(200):
