@@ -503,12 +503,15 @@ if __name__ == "__main__":
         # while we wait, and reading it quickly. 
         #print(websocket.ignore(timedelta(milliseconds=200)))
         for x in range(200):
-            try:
-                message = websocket.recv()
-                messages.append(json.loads(message))       
-            except json.JSONDecodeError:
-                print("<<" + message + ">>")
-                continue #typically blank lines   
+            message = websocket.recv()
+            for line in message.splitlines():
+                try:
+                    #print("<"+line+">")
+                    if line != "":
+                        messages.append(json.loads(line))       
+                except json.JSONDecodeError:
+                    print("oops" + line)
+                    
                 
     # b = Booker()
     # b.add_group("***REMOVED***")
