@@ -494,6 +494,15 @@ class Experiment(object):
                 return v
         except KeyError:
             raise KeyError("time key not found in this message")
+            
+    def extract_series(self, arr, key, separator="/"):
+        values = []
+        for obj in arr:
+            vv = self.extract(obj, key, separator=separator)
+            for v in vv:
+                values.append(v)
+        return values
+        
                 
     def recv(self, timeout=None):
         return self.websocket.recv(timeout=timeout)
@@ -673,50 +682,40 @@ def printProgressBar (iteration, total, prefix = '', suffix = '', decimals = 1, 
             
 if __name__ == "__main__":
     
-    #a = Experiment("","")
-    #obj = {"a":{"b":[2,3],"c":3}}
-    #b = a.extract(obj,"a/b")
-    #print(b)
     
-    if True: 
-    
-        messages = []
-       
-        with Experiment('***REMOVED***','Spinner 51 (Open Days)', user="***REMOVED***", exact=True) as expt:
+    messages = []
+   
+    with Experiment('***REMOVED***','Spinner 51 (Open Days)', user="***REMOVED***", exact=True) as expt:
+        
+        #receive a message to get the initial time stamp - not necessary
+        expt.command('{"set":"mode","to":"stop"}')
+
+        expt.command('{"set":"mode","to":"position"}')
+
+        expt.command('{"set":"parameters","kp":1,"ki":0,"kd":0}')
+        time.sleep(0.5)
             
-            #receive a message to get the initial time stamp - not necessary
-            expt.command('{"set":"mode","to":"stop"}')
-
-            expt.command('{"set":"mode","to":"position"}')
-
-            expt.command('{"set":"parameters","kp":1,"ki":0,"kd":0}')
-            time.sleep(0.5)
-            expt.command('{"set":"position","to":2}')
-
-            expt.ignore(0.5)
-            messages = expt.collect(3.0)
-            
-      
+        expt.command('{"set":"position","to":2}')    
+        
+        expt.ignore(0.5)
+        messages = expt.collect(1.5)
+        
+        ts = expt.extract_series(messages, "t")
+        ds = expt.extract_series(messages, "d")
+        cs = expt.extract_series(messages, "c")
+        
+        t = np.array(ts)
+        t = t - t[0]
+        plt.figure()        
+        plt.plot(t/1e3,ds,'-b',label="position")
+        plt.plot(t/1e3,cs,':r',label="set point")
+        plt.xlabel("time(s)")
+        plt.ylabel("position(rad)")
+        plt.legend()
+     
   
                           
-    
-        ts = []
-        ds = []    
-        for m in messages:
-            try:
-                for t in m["t"]:
-                    ts.append(t)
-                for d in m["d"]:
-                    ds.append(d)
-            except KeyError:
-                continue
-            
-        plt.figure()        
-        plt.plot(ts,ds)
-            
-        # #tsa = np.array(ts)
-        # #dsa = np.array(ds)
-        # #plt.plot(tsa/1e6,dsa)
+
         
             
     
