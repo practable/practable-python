@@ -684,7 +684,8 @@ if __name__ == "__main__":
    
     messages = []
    
-    with Experiment('***REMOVED***','Spinner 51 (Open Days)', user="***REMOVED***", exact=True) as expt:
+    #modify with actual group code and experiment name
+    with Experiment('g-open-xxxxx','Spinner 51', exact=True) as expt:
         
         # Command a step of 2 radians & collect the data
         expt.command('{"set":"mode","to":"stop"}')

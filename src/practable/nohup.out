@@ -1,3 +1,0 @@
-PYLINTHOME is now '/home/tim/.cache/pylint' but obsolescent '/home/tim/.pylint.d' is found; you can safely remove the latter
-[2373746:2373822:0716/132338.543519:ERROR:simple_version_upgrade.cc(165)] Disk cache backend fake index file has wrong magic number.
-[2373746:2373822:0716/132338.544068:ERROR:simple_backend_impl.cc(757)] Simple Cache Backend: wrong file structure on disk: 3 path: /home/tim/.cache/Spyder/QtWebEngine/Default/Cache
