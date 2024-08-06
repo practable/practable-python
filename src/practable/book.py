@@ -13,7 +13,6 @@ import collections.abc
 from datetime import datetime, timedelta, UTC
 import json
 import math
-import matplotlib.pyplot as plt
 import numpy as np
 import os.path
 from platformdirs import user_config_dir
@@ -680,39 +679,43 @@ def printProgressBar (iteration, total, prefix = '', suffix = '', decimals = 1, 
     
             
 if __name__ == "__main__":
-   
-    messages = []
-   
-    #modify with actual group code and experiment name
-    with Experiment('g-open-xxxxx','Spinner 51', exact=True) as expt:
-        
-        # Command a step of 2 radians & collect the data
-        expt.command('{"set":"mode","to":"stop"}')
-        expt.command('{"set":"mode","to":"position"}')
-        expt.command('{"set":"parameters","kp":1,"ki":0,"kd":0}')
+    
+    print("""
+#Example code:
+import matplotlib.pyplot as plt
 
-        time.sleep(0.5)
-            
-        expt.command('{"set":"position","to":2}')    
+messages = []
+   
+#modify with actual group code and experiment name
+with Experiment('g-open-xxxxx','Spinner 51', exact=True) as expt:
+    
+    # Command a step of 2 radians & collect the data
+    expt.command('{"set":"mode","to":"stop"}')
+    expt.command('{"set":"mode","to":"position"}')
+    expt.command('{"set":"parameters","kp":1,"ki":0,"kd":0}')
+
+    time.sleep(0.5)
         
-        expt.ignore(0.5)
-        messages = expt.collect(1.5)
-        
-        # Process the data
-        ts = expt.extract_series(messages, "t")
-        ds = expt.extract_series(messages, "d")
-        cs = expt.extract_series(messages, "c")
-        
-        t = np.array(ts)
-        t = t - t[0]
-        
-        # Plot the data
-        plt.figure()        
-        plt.plot(t/1e3,ds,'-b',label="position")
-        plt.plot(t/1e3,cs,':r',label="set point")
-        plt.xlabel("time(s)")
-        plt.ylabel("position(rad)")
-        plt.legend()
+    expt.command('{"set":"position","to":2}')    
+    
+    expt.ignore(0.5)
+    messages = expt.collect(1.5)
+    
+    # Process the data
+    ts = expt.extract_series(messages, "t")
+    ds = expt.extract_series(messages, "d")
+    cs = expt.extract_series(messages, "c")
+    
+    t = np.array(ts)
+    t = t - t[0]
+    
+    # Plot the data
+    plt.figure()        
+    plt.plot(t/1e3,ds,'-b',label="position")
+    plt.plot(t/1e3,cs,':r',label="set point")
+    plt.xlabel("time(s)")
+    plt.ylabel("position(rad)")
+    plt.legend()""")
      
   
                           
