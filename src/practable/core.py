@@ -6,6 +6,8 @@ Created on Tue Jul 16 13:36:13 2024
 Booker class handles logging into a booking server and making bookings
 The user name is stored in the user's configuration directory, or in cwd
 
+Experiment class handles connecting to the experiments themselves
+
 @author: tim
 
 """

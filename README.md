@@ -7,7 +7,7 @@ a library for connecting to experiments in python
 ```
 import matplotlib.pyplot as plt
 import numpy as np
-from practable.book import Experiment
+from practable.core import Experiment
 import time
 
 messages = []
