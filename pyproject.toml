@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "practable"
-version = "0.0.3"
+version = "0.0.4"
 authors = [
   { name="Timothy Drysdale", email="timothy.d.drysdale@gmail.com" },
 ]
