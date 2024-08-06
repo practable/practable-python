@@ -4,7 +4,7 @@ a library for connecting to experiments in python
 
 ## Example Usage
 
-```
+```python
 import matplotlib.pyplot as plt
 import numpy as np
 from practable.core import Experiment
