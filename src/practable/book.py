@@ -39,7 +39,6 @@ class Booker:
         
         u = urlparse(book_server)
         self.activities={}
-        self.background_tasks = set() #strong ref to stop coros being gargage collected early  https://docs.python.org/3/library/asyncio-task.html#id4
         self.host = u.netloc
         self.app_author = "practable" 
         self.app_name = "practable-python-" + u.netloc.replace(".","-") + u.path.replace("/","-")
