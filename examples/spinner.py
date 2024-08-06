@@ -4,12 +4,13 @@
 
 import matplotlib.pyplot as plt
 import numpy as np
-from practable import Experiment
+from practable.book import Experiment
+import time
 
 messages = []
    
 #modify with actual group code and experiment name
-with Experiment('g-open-xxxxx','Spinner 51', exact=True) as expt:
+with Experiment('g-open-x3fca8','Spinner 51 (Open Days)', exact=True) as expt:
     
     # Command a step of 2 radians & collect the data
     expt.command('{"set":"mode","to":"stop"}')

@@ -4,15 +4,16 @@ a library for connecting to experiments in python
 
 ## Example Usage
 
-```python
-import practable
-import numpy as np
+```
 import matplotlib.pyplot as plt
+import numpy as np
+from practable.book import Experiment
+import time
 
 messages = []
    
 #modify with actual group code and experiment name
-with practable.Experiment('g-open-xxxxx','Spinner 51', exact=True) as expt:
+with Experiment('g-open-x3fca8','Spinner 51 (Open Days)', exact=True) as expt:
     
     # Command a step of 2 radians & collect the data
     expt.command('{"set":"mode","to":"stop"}')
@@ -41,9 +42,8 @@ with practable.Experiment('g-open-xxxxx','Spinner 51', exact=True) as expt:
     plt.xlabel("time(s)")
     plt.ylabel("position(rad)")
     plt.legend()
-    plt.savefig('spinner.jpg',dpi=300)
-
 ```
+
 
 This script produces the following text output
 ```
