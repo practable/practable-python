@@ -1,6 +1,6 @@
 [build-system]
 requires = [
-    "setuptools>=62.6",
+    "setuptools>=72.0",
     "wheel"
 ]
 build-backend = "setuptools.build_meta"
@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "practable"
-version = "0.0.5"
+version = "0.0.6"
 authors = [
   { name="Timothy Drysdale", email="timothy.d.drysdale@gmail.com" },
 ]
@@ -20,10 +20,11 @@ classifiers = [
     "License :: OSI Approved :: GNU Affero General Public License v3",
     "Operating System :: OS Independent",
     ]
-dynamic = ["dependencies"]
-
-[tool.setuptools.dynamic]
-dependencies = {file = ["requirements.txt"]}   
+dependencies = [
+    "numpy>=2.0",
+    "platformdirs>=4.2",
+    "websockets>=12.0", 
+] 
 
 [project.urls]
 Homepage = "https://github.com/practable/practable-python"

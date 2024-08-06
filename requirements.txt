@@ -1,4 +1,0 @@
-matplotlib==3.9.0
-numpy==2.0.1
-platformdirs==4.2.2
-websockets>=12.0
