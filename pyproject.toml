@@ -20,7 +20,11 @@ classifiers = [
     "License :: OSI Approved :: GNU Affero General Public License v3",
     "Operating System :: OS Independent",
     ]
-    
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}   
+
 [project.urls]
 Homepage = "https://github.com/practable/practable-python"
 Issues = "https://github.com/practable/practable-python/issues"
