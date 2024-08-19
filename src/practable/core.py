@@ -732,7 +732,9 @@ if __name__ == "__main__":
 
     print("""
 #Example code:
+%pip install practable    
 import matplotlib.pyplot as plt
+from practable.core import Experiment
 
 messages = []
    
