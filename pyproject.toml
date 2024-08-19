@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "practable"
-version = "0.0.21"
+version = "0.0.22"
 authors = [
   { name="Timothy Drysdale", email="timothy.d.drysdale@gmail.com" },
 ]

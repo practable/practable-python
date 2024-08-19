@@ -260,7 +260,7 @@ class Booker:
 
         #remove stale activities
         activities = self.activities
-        now = datetime.now(timezone.UTC)
+        now = datetime.now(timezone.utc)
         for activity in activities:
             if datetime.fromtimestamp(activity["exp"], tz=timezone.utc) > now:
                 del self.activities[activity]
@@ -767,4 +767,4 @@ with Experiment('g-open-xxxxx','Spinner 51', exact=True) as expt:
     plt.plot(t/1e3,cs,':r',label="set point")
     plt.xlabel("time(s)")
     plt.ylabel("position(rad)")
-    plt.legend()""")
+    plt.legend()
