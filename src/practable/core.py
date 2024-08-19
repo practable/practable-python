@@ -12,7 +12,7 @@ Experiment class handles connecting to the experiments themselves
 
 """
 import collections.abc
-from datetime import datetime, timedelta, UTC
+from datetime import datetime, timedelta, timezone
 import json
 import math
 import numpy as np
@@ -86,7 +86,7 @@ class Booker:
         if not isinstance(duration, timedelta):
             raise TypeError("duration must be a datetime.timedelta")
 
-        start = datetime.now(UTC)
+        start = datetime.now(timezone.utc)
         end = start + duration
 
         if selected == "":
@@ -163,7 +163,7 @@ class Booker:
             start = datetime.fromisoformat(avail[0]["start"])
             end = datetime.fromisoformat(avail[0]["end"])
             when = {"start": start, "end": end}
-            available_now = when["start"] <= (datetime.now(UTC) +
+            available_now = when["start"] <= (datetime.now(timezone.utc) +
                                               timedelta(seconds=1))
 
         return available_now, when
@@ -260,9 +260,9 @@ class Booker:
 
         #remove stale activities
         activities = self.activities
-        now = datetime.now(UTC)
+        now = datetime.now(timezone.UTC)
         for activity in activities:
-            if datetime.fromtimestamp(activity["exp"], tz=UTC) > now:
+            if datetime.fromtimestamp(activity["exp"], tz=timezone.utc) > now:
                 del self.activities[activity]
 
         ad = r.json()
@@ -292,7 +292,7 @@ class Booker:
 
         bookings = r.json()
 
-        now = datetime.now(UTC)
+        now = datetime.now(timezone.utc)
 
         self.bookings = []
 
