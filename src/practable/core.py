@@ -768,3 +768,4 @@ with Experiment('g-open-xxxxx','Spinner 51', exact=True) as expt:
     plt.xlabel("time(s)")
     plt.ylabel("position(rad)")
     plt.legend()
+""")
