@@ -159,8 +159,8 @@ class Booker:
             available_now = False
             when = []
         else:
-            start = datetime.fromisoformat(avail[0]["start"])
-            end = datetime.fromisoformat(avail[0]["end"])
+            start = datetime.strptime(avail[0]["start"], "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
+            end = datetime.strptime(avail[0]["end"], "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
             when = {"start": start, "end": end}
             available_now = when["start"] <= (datetime.now(timezone.utc) +
                                               timedelta(seconds=1))
@@ -296,8 +296,8 @@ class Booker:
         self.bookings = []
 
         for booking in bookings:
-            start = datetime.fromisoformat(booking["when"]["start"])
-            end = datetime.fromisoformat(booking["when"]["end"])
+            start = datetime.strptime(booking["when"]["start"], "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
+            end = datetime.strptime(booking["when"]["end"], "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
 
             if now >= start and now <= end:
                 self.bookings.append(booking)
